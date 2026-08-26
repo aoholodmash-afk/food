@@ -1,5 +1,6 @@
 const { Markup } = require('telegraf');
 const { supabase, resolveIngredients } = require('../supabase');
+const { generateRecipe } = require('../services/aiService');
 
 module.exports = async (ctx) => {
   const user = ctx.user;
@@ -20,21 +21,25 @@ module.exports = async (ctx) => {
     );
   }
 
-  const rawIngredients = ingredientsText.split(',').map(s => s.trim().toLowerCase()).filter(s => s.length > 0);
-  const ingredients = resolveIngredients(rawIngredients);
+  const rawWords = ingredientsText.toLowerCase()
+    .split(/,|и|\n/)
+    .map(s => s.trim())
+    .filter(s => s.length > 2);
 
-  if (ingredients.length === 0) {
+  if (rawWords.length === 0) {
     return ctx.reply('Не удалось распознать продукты. Попробуйте ещё раз.');
   }
 
   try {
-    // Fuzzy-поиск
+    const searchGroups = resolveIngredients(rawWords);
+    const allVariants = searchGroups.flat();
+
     let allFoundIngs = [];
-    for (const ing of ingredients) {
+    for (const variant of allVariants) {
       const { data: found } = await supabase
         .from('ingredients')
         .select('id, name_ru')
-        .ilike('name_ru', `%${ing}%`);
+        .ilike('name_ru', `%${variant}%`);
       if (found && found.length > 0) {
         allFoundIngs.push(...found);
       }
@@ -50,6 +55,25 @@ module.exports = async (ctx) => {
     }
 
     if (uniqueIngs.length === 0) {
+      const msg = await ctx.reply('🔍 Не нашёл в базе. Генерирую рецепт специально для вас...');
+      const recipe = await generateRecipe(rawWords);
+      await ctx.deleteMessage(msg.message_id).catch(() => {});
+
+      if (recipe) {
+        const message = `🍳 ${recipe.name_ru}
+⏱ ${recipe.time_minutes || '?'} мин | 🔥 ${recipe.calories_per_serving || '?'} ккал | 👤 ${recipe.servings} порции
+
+📝 Ингредиенты:
+${(recipe.instructions || []).map((step, i) => `${i + 1}. ${step}`).join('\n')}`;
+
+        const keyboard = Markup.inlineKeyboard([
+          [Markup.button.callback('👨‍🍳 Готовить', `cook_${recipe.id}`)],
+          [Markup.button.callback('💾 В избранное', `fav_${recipe.id}`)]
+        ]);
+
+        return ctx.reply(message, keyboard);
+      }
+
       return ctx.reply('К сожалению, рецептов с такими продуктами не найдено.');
     }
 
@@ -61,20 +85,69 @@ module.exports = async (ctx) => {
       .in('ingredient_id', ingIds);
 
     if (!recipeIngs || recipeIngs.length === 0) {
+      const msg = await ctx.reply('🔍 Не нашёл в базе. Генерирую рецепт специально для вас...');
+      const recipe = await generateRecipe(rawWords);
+      await ctx.deleteMessage(msg.message_id).catch(() => {});
+
+      if (recipe) {
+        const message = `🍳 ${recipe.name_ru}
+⏱ ${recipe.time_minutes || '?'} мин | 🔥 ${recipe.calories_per_serving || '?'} ккал | 👤 ${recipe.servings} порции
+
+📝 Ингредиенты:
+${(recipe.instructions || []).map((step, i) => `${i + 1}. ${step}`).join('\n')}`;
+
+        const keyboard = Markup.inlineKeyboard([
+          [Markup.button.callback('👨‍🍳 Готовить', `cook_${recipe.id}`)],
+          [Markup.button.callback('💾 В избранное', `fav_${recipe.id}`)]
+        ]);
+
+        return ctx.reply(message, keyboard);
+      }
+
       return ctx.reply('К сожалению, рецептов с такими продуктами не найдено.');
     }
 
-    const recipeCounts = {};
+    const recipeScores = {};
     for (const ri of recipeIngs) {
-      recipeCounts[ri.recipe_id] = (recipeCounts[ri.recipe_id] || 0) + 1;
+      if (!recipeScores[ri.recipe_id]) {
+        recipeScores[ri.recipe_id] = { matchedGroups: 0, matchedIngs: new Set() };
+      }
+      recipeScores[ri.recipe_id].matchedIngs.add(ri.ingredient_id);
     }
 
-    const sortedRecipes = Object.entries(recipeCounts)
-      .sort((a, b) => b[1] - a[1])
+    for (const recipeId of Object.keys(recipeScores)) {
+      const score = recipeScores[recipeId];
+      let matchedGroups = 0;
+
+      for (const group of searchGroups) {
+        const groupIngs = uniqueIngs.filter(ing =>
+          group.some(variant => ing.name_ru.toLowerCase().includes(variant.toLowerCase()))
+        );
+        const groupIds = groupIngs.map(i => i.id);
+        const hasMatch = groupIds.some(id => score.matchedIngs.has(id));
+        if (hasMatch) matchedGroups++;
+      }
+
+      score.matchedGroups = matchedGroups;
+    }
+
+    const sortedRecipes = Object.entries(recipeScores)
+      .sort((a, b) => b[1].matchedGroups - a[1].matchedGroups)
       .slice(0, 5);
 
     if (sortedRecipes.length === 0) {
       return ctx.reply('К сожалению, рецептов с такими продуктами не найдено.');
+    }
+
+    const totalGroups = searchGroups.length;
+    const strictRecipes = sortedRecipes.filter(([_, score]) => score.matchedGroups === totalGroups);
+
+    let mode = 'soft';
+    let recipesToShow = sortedRecipes;
+
+    if (strictRecipes.length >= 2) {
+      mode = 'strict';
+      recipesToShow = strictRecipes;
     }
 
     await supabase
@@ -82,7 +155,7 @@ module.exports = async (ctx) => {
       .update({ daily_requests: user.daily_requests + 1 })
       .eq('telegram_id', user.telegram_id);
 
-    const recipeIds = sortedRecipes.map(r => parseInt(r[0]));
+    const recipeIds = recipesToShow.map(([id]) => parseInt(id));
     const { data: recipes } = await supabase
       .from('recipes')
       .select('*')
@@ -96,16 +169,17 @@ module.exports = async (ctx) => {
     recipes.forEach(r => { recipeMap[r.id] = r; });
     const orderedRecipes = recipeIds.map(id => recipeMap[id]).filter(Boolean);
 
-    const totalIngs = ingredients.length;
-    const message = `🔍 Найдено ${orderedRecipes.length} рецептов (из ${totalIngs} продуктов):`;
+    const header = mode === 'strict'
+      ? `✅ Нашёл рецепты со всеми ингредиентами (${totalGroups}/${totalGroups}):`
+      : `⚡ Нашёл похожие (не всё есть, но можно адаптировать):`;
 
     const buttons = orderedRecipes.map(r => {
-      const count = recipeCounts[r.id];
-      const percent = Math.round((count / totalIngs) * 100);
-      return [Markup.button.callback(`🍳 ${r.name_ru} (${count}/${totalIngs}, ${percent}%)`, `recipe_${r.id}`)];
+      const score = recipeScores[r.id];
+      const percent = Math.round((score.matchedGroups / totalGroups) * 100);
+      return [Markup.button.callback(`🍳 ${r.name_ru} (${score.matchedGroups}/${totalGroups}, ${percent}%)`, `recipe_${r.id}`)];
     });
 
-    await ctx.reply(message, Markup.inlineKeyboard(buttons));
+    await ctx.reply(header, Markup.inlineKeyboard(buttons));
 
   } catch (error) {
     console.error('Ошибка:', error.message);

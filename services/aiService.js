@@ -1,93 +1,114 @@
-/**
- * AI-сервис для генерации рецептов (V2)
- * Требует OPENAI_API_KEY в .env
- */
+const { supabase } = require('../supabase');
 
-let openai = null;
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
+const DEEPSEEK_API_URL = 'https://api.deepseek.com/v1/chat/completions';
 
-function initOpenAI() {
-  if (process.env.OPENAI_API_KEY) {
-    const { OpenAI } = require('openai');
-    openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY
-    });
-  }
-}
-
-/**
- * Сгенерировать рецепт по ингредиентам
- * @param {string[]} ingredients - массив ингредиентов
- * @returns {Promise<Object|null>} - рецепт в формате JSON
- */
 async function generateRecipe(ingredients) {
-  if (!openai) {
-    initOpenAI();
-  }
-
-  if (!openai) {
-    console.warn('OpenAI не инициализирован. Укажите OPENAI_API_KEY в .env');
+  if (!DEEPSEEK_API_KEY) {
+    console.warn('DEEPSEEK_API_KEY не установлен');
     return null;
   }
+
+  const prompt = `Создай реалистичный рецепт из продуктов: ${ingredients.join(', ')}.
+Верни ТОЛЬКО JSON без дополнительного текста:
+{
+  "name": "Название на русском",
+  "timeMinutes": число,
+  "caloriesPerServing": число,
+  "servings": 2,
+  "difficulty": "easy",
+  "instructions": ["шаг 1", "шаг 2", "шаг 3"],
+  "ingredients": [{"name": "продукт на русском", "amount": "200", "unit": "г"}],
+  "tags": ["тег1", "тег2"]
+}`;
 
   try {
-    const prompt = `У меня есть: ${ingredients.join(', ')}.
-Создай рецепт в JSON формате:
-{
-  "name_ru": "Название рецепта",
-  "time_minutes": 30,
-  "calories_per_serving": 350,
-  "servings": 2,
-  "ingredients": [
-    {"name": "Продукт", "amount": "200", "unit": "г"}
-  ],
-  "instructions": [
-    "Шаг 1",
-    "Шаг 2"
-  ],
-  "cuisine": "Русская",
-  "category": "Обед",
-  "difficulty": "easy"
-}
-
-Верни только JSON, без дополнительного текста.`;
-
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: 'Ты - шеф-повар. Создавай рецепты в указанном JSON формате.'
-        },
-        {
-          role: 'user',
-          content: prompt
-        }
-      ],
-      temperature: 0.7,
-      max_tokens: 1000
+    const response = await fetch(DEEPSEEK_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.8,
+        max_tokens: 1000
+      })
     });
 
-    const response = completion.choices[0].message.content;
-    const recipe = JSON.parse(response);
+    const data = await response.json();
+    let content = data.choices[0].message.content;
+    content = content.replace(/```json\n?|\n?```/g, '').trim();
+    const recipe = JSON.parse(content);
 
-    return {
-      nameRu: recipe.name_ru,
-      timeMinutes: recipe.time_minutes,
-      caloriesPerServing: recipe.calories_per_serving,
-      servings: recipe.servings,
-      ingredients: recipe.ingredients,
-      instructions: recipe.instructions,
-      cuisine: recipe.cuisine,
-      category: recipe.category,
-      difficulty: recipe.difficulty,
-      source: 'ai'
-    };
+    // Сохраняем в базу
+    const savedRecipe = await saveRecipe(recipe);
+    return savedRecipe;
   } catch (error) {
-    console.error('Ошибка генерации рецепта:', error);
+    console.error('Ошибка генерации рецепта:', error.message);
     return null;
   }
 }
 
-module.exports = {
-  generateRecipe
-};
+async function saveRecipe(data) {
+  try {
+    // Создаём рецепт
+    const { data: recipe, error: recipeError } = await supabase
+      .from('recipes')
+      .insert({
+        name_ru: data.name,
+        time_minutes: data.timeMinutes,
+        calories_per_serving: data.caloriesPerServing,
+        servings: data.servings,
+        difficulty: data.difficulty,
+        instructions: data.instructions,
+        tags: data.tags,
+        source: 'ai_fallback'
+      })
+      .select()
+      .single();
+
+    if (recipeError) {
+      console.error('Ошибка создания рецепта:', recipeError.message);
+      return null;
+    }
+
+    // Создаём ингредиенты и связи
+    for (const ing of data.ingredients) {
+      // Ищем или создаём ингредиент
+      let { data: existingIng } = await supabase
+        .from('ingredients')
+        .select('id')
+        .eq('name_ru', ing.name)
+        .single();
+
+      if (!existingIng) {
+        const { data: newIng } = await supabase
+          .from('ingredients')
+          .insert({ name_ru: ing.name, category: 'general' })
+          .select()
+          .single();
+        existingIng = newIng;
+      }
+
+      // Создаём связь
+      await supabase
+        .from('recipe_ingredients')
+        .insert({
+          recipe_id: recipe.id,
+          ingredient_id: existingIng.id,
+          amount: ing.amount,
+          unit: ing.unit,
+          is_main: true
+        });
+    }
+
+    return recipe;
+  } catch (error) {
+    console.error('Ошибка сохранения рецепта:', error.message);
+    return null;
+  }
+}
+
+module.exports = { generateRecipe };
