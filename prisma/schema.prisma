@@ -1,0 +1,102 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                Int       @id @default(autoincrement())
+  telegramId        BigInt    @unique @map("telegram_id")
+  username          String?   @db.VarChar(255)
+  firstName         String?   @map("first_name") @db.VarChar(255)
+  subscription      String    @default("free") @db.VarChar(20)
+  subExpiresAt      DateTime? @map("sub_expires_at")
+  dailyRequests     Int       @default(0) @map("daily_requests")
+  lastRequestDate   DateTime? @default(now()) @map("last_request_date")
+  servingsDefault   Int       @default(2) @map("servings_default")
+  excludedIngredients String[] @map("excluded_ingredients")
+  createdAt         DateTime  @default(now()) @map("created_at")
+
+  favorites Favorite[]
+  payments  Payment[]
+
+  @@map("users")
+}
+
+model Recipe {
+  id                Int       @id @default(autoincrement())
+  nameRu            String    @map("name_ru") @db.VarChar(255)
+  nameEn            String?   @map("name_en") @db.VarChar(255)
+  cuisine           String?   @db.VarChar(50)
+  category          String?   @db.VarChar(50)
+  difficulty        String?   @db.VarChar(20)
+  timeMinutes       Int?      @map("time_minutes")
+  caloriesPerServing Int?     @map("calories_per_serving")
+  servings          Int       @default(2)
+  instructions      String[]
+  imageUrl          String?   @map("image_url") @db.VarChar(500)
+  tags              String[]
+  ingredientsText   String?   @map("ingredients_text")
+  source            String?   @db.VarChar(100)
+  createdAt         DateTime  @default(now()) @map("created_at")
+
+  recipeIngredients RecipeIngredient[]
+  favorites         Favorite[]
+
+  @@map("recipes")
+}
+
+model Ingredient {
+  id      Int    @id @default(autoincrement())
+  nameRu  String @unique @map("name_ru") @db.VarChar(100)
+  nameEn  String? @map("name_en") @db.VarChar(100)
+  category String? @db.VarChar(50)
+
+  recipeIngredients RecipeIngredient[]
+
+  @@map("ingredients")
+}
+
+model RecipeIngredient {
+  id           Int     @id @default(autoincrement())
+  recipeId     Int     @map("recipe_id")
+  ingredientId Int     @map("ingredient_id")
+  amount       String? @db.VarChar(50)
+  unit         String? @db.VarChar(20)
+  isMain       Boolean @default(true) @map("is_main")
+
+  recipe     Recipe     @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
+
+  @@map("recipe_ingredients")
+}
+
+model Favorite {
+  id        Int      @id @default(autoincrement())
+  userId    BigInt   @map("user_id")
+  recipeId  Int      @map("recipe_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user   User   @relation(fields: [userId], references: [telegramId])
+  recipe Recipe @relation(fields: [recipeId], references: [id])
+
+  @@unique([userId, recipeId])
+  @@map("favorites")
+}
+
+model Payment {
+  id               Int      @id @default(autoincrement())
+  userId           BigInt   @map("user_id")
+  amount           Int?
+  currency         String?  @default("XTR") @db.VarChar(10)
+  status           String?  @db.VarChar(20)
+  providerPaymentId String? @map("provider_payment_id") @db.VarChar(255)
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [telegramId])
+
+  @@map("payments")
+}
