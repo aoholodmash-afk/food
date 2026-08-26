@@ -2,6 +2,10 @@ require('dotenv').config();
 const { Telegraf, session } = require('telegraf');
 const { Pool } = require('pg');
 const http = require('http');
+const dns = require('dns');
+
+// Принудительно IPv4
+dns.setDefaultResultOrder('ipv4first');
 
 // HTTP-сервер для Render (требует открытый порт)
 const server = http.createServer((req, res) => {
@@ -15,9 +19,8 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
   max: 5,
-  connectionTimeoutMillis: 10000,
-  idleTimeoutMillis: 30000,
-  family: 4
+  connectionTimeoutMillis: 15000,
+  idleTimeoutMillis: 30000
 });
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
