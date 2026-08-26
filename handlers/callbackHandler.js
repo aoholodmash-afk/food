@@ -79,12 +79,25 @@ ${ingList}`;
 
       const { data: ingredients } = await ctx.supabase
         .from('recipe_ingredients')
-        .select('amount, unit, is_main, ingredients(name_ru)')
+        .select('amount, unit, is_main, ingredient_id')
         .eq('recipe_id', recipeId);
 
-      const ingList = (ingredients || [])
-        .map(ri => `• ${ri.ingredients.name_ru} — ${ri.amount || ''} ${ri.unit || ''}`)
-        .join('\n');
+      // Получаем названия ингредиентов отдельно
+      let ingList = '';
+      if (ingredients && ingredients.length > 0) {
+        const ingIds = ingredients.map(i => i.ingredient_id);
+        const { data: ingNames } = await ctx.supabase
+          .from('ingredients')
+          .select('id, name_ru')
+          .in('id', ingIds);
+
+        const ingMap = {};
+        (ingNames || []).forEach(i => { ingMap[i.id] = i.name_ru; });
+
+        ingList = ingredients
+          .map(ri => `• ${ingMap[ri.ingredient_id] || '?'} — ${ri.amount || ''} ${ri.unit || ''}`)
+          .join('\n');
+      }
 
       const instructions = (recipe.instructions || [])
         .map((step, i) => `${i + 1}. ${step}`)
@@ -197,12 +210,24 @@ ${instructions}
 
       const { data: ingredients } = await ctx.supabase
         .from('recipe_ingredients')
-        .select('amount, unit, is_main, ingredients(name_ru)')
+        .select('amount, unit, is_main, ingredient_id')
         .eq('recipe_id', recipe.id);
 
-      const ingList = (ingredients || [])
-        .map(ri => `• ${ri.ingredients.name_ru} — ${ri.amount || ''} ${ri.unit || ''}`)
-        .join('\n');
+      let ingList = '';
+      if (ingredients && ingredients.length > 0) {
+        const ingIds = ingredients.map(i => i.ingredient_id);
+        const { data: ingNames } = await ctx.supabase
+          .from('ingredients')
+          .select('id, name_ru')
+          .in('id', ingIds);
+
+        const ingMap = {};
+        (ingNames || []).forEach(i => { ingMap[i.id] = i.name_ru; });
+
+        ingList = ingredients
+          .map(ri => `• ${ingMap[ri.ingredient_id] || '?'} — ${ri.amount || ''} ${ri.unit || ''}`)
+          .join('\n');
+      }
 
       const message = `🎲 Случайный рецепт:
 

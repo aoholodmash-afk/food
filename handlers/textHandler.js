@@ -1,5 +1,5 @@
 const { Markup } = require('telegraf');
-const { resolveIngredients } = require('../supabase');
+const { supabase, resolveIngredients } = require('../supabase');
 
 module.exports = async (ctx) => {
   const text = ctx.message.text;
@@ -27,7 +27,7 @@ module.exports = async (ctx) => {
       return require('./commands/subscribe')(ctx);
   }
 
-  // Считаем ингредиентами
+  // Парсинг ингредиентов
   const rawIngredients = text.split(',').map(s => s.trim().toLowerCase()).filter(s => s.length > 0);
   const ingredients = resolveIngredients(rawIngredients);
 
@@ -47,31 +47,53 @@ module.exports = async (ctx) => {
   }
 
   try {
-    const { data: foundIngs } = await ctx.supabase
-      .from('ingredients')
-      .select('id, name_ru')
-      .in('name_ru', ingredients);
+    // Fuzzy-поиск: ищем ингредиенты по частичному совпадению
+    let allFoundIngs = [];
 
-    if (!foundIngs || foundIngs.length === 0) {
-      return ctx.reply('К сожалению, рецептов с такими продуктами не найдено.');
+    for (const ing of ingredients) {
+      const { data: found } = await supabase
+        .from('ingredients')
+        .select('id, name_ru')
+        .ilike('name_ru', `%${ing}%`);
+
+      if (found && found.length > 0) {
+        allFoundIngs.push(...found);
+      }
     }
 
-    const ingIds = foundIngs.map(i => i.id);
+    // Убираем дубликаты
+    const uniqueIngs = [];
+    const seenIds = new Set();
+    for (const ing of allFoundIngs) {
+      if (!seenIds.has(ing.id)) {
+        seenIds.add(ing.id);
+        uniqueIngs.push(ing);
+      }
+    }
 
-    const { data: recipeIngs } = await ctx.supabase
+    if (uniqueIngs.length === 0) {
+      return ctx.reply('К сожалению, рецептов с такими продуктами не найдено. Попробуйте другие названия.');
+    }
+
+    const ingIds = uniqueIngs.map(i => i.id);
+
+    // Ищем рецепты с любым из ингредиентов
+    const { data: recipeIngs } = await supabase
       .from('recipe_ingredients')
-      .select('recipe_id')
+      .select('recipe_id, ingredient_id')
       .in('ingredient_id', ingIds);
 
     if (!recipeIngs || recipeIngs.length === 0) {
       return ctx.reply('К сожалению, рецептов с такими продуктами не найдено.');
     }
 
+    // Считаем совпадения
     const recipeCounts = {};
     for (const ri of recipeIngs) {
       recipeCounts[ri.recipe_id] = (recipeCounts[ri.recipe_id] || 0) + 1;
     }
 
+    // Сортируем по количеству совпадений (больше = лучше)
     const sortedRecipes = Object.entries(recipeCounts)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5);
@@ -80,28 +102,41 @@ module.exports = async (ctx) => {
       return ctx.reply('К сожалению, рецептов с такими продуктами не найдено.');
     }
 
-    await ctx.supabase
+    // Увеличиваем счетчик запросов
+    await supabase
       .from('users')
       .update({ daily_requests: user.daily_requests + 1 })
       .eq('telegram_id', user.telegram_id);
 
-    const recipeIds = sortedRecipes.map(r => r[0]);
-    const { data: recipes } = await ctx.supabase
+    // Получаем рецепты
+    const recipeIds = sortedRecipes.map(r => parseInt(r[0]));
+    const { data: recipes } = await supabase
       .from('recipes')
       .select('*')
       .in('id', recipeIds);
 
-    const message = `🔍 Найдено ${recipes.length} рецептов:`;
+    if (!recipes || recipes.length === 0) {
+      return ctx.reply('К сожалению, рецептов с такими продуктами не найдено.');
+    }
 
-    const buttons = recipes.map(r => {
+    // Сортируем рецепты в правильном порядке
+    const recipeMap = {};
+    recipes.forEach(r => { recipeMap[r.id] = r; });
+    const orderedRecipes = recipeIds.map(id => recipeMap[id]).filter(Boolean);
+
+    const totalIngs = ingredients.length;
+    const message = `🔍 Найдено ${orderedRecipes.length} рецептов (из ${totalIngs} продуктов):`;
+
+    const buttons = orderedRecipes.map(r => {
       const count = recipeCounts[r.id];
-      return [Markup.button.callback(`🍳 ${r.name_ru} (${count} совп.)`, `recipe_${r.id}`)];
+      const percent = Math.round((count / totalIngs) * 100);
+      return [Markup.button.callback(`🍳 ${r.name_ru} (${count}/${totalIngs}, ${percent}%)`, `recipe_${r.id}`)];
     });
 
     await ctx.reply(message, Markup.inlineKeyboard(buttons));
 
   } catch (error) {
-    console.error('Ошибка:', error.message);
+    console.error('Ошибка поиска:', error.message);
     ctx.reply('Произошла ошибка при поиске. Попробуйте позже.');
   }
 };
