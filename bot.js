@@ -16,7 +16,8 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
   max: 5,
   connectionTimeoutMillis: 10000,
-  idleTimeoutMillis: 30000
+  idleTimeoutMillis: 30000,
+  family: 4
 });
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
