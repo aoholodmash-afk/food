@@ -1,6 +1,15 @@
 require('dotenv').config();
 const { Telegraf, session } = require('telegraf');
 const { Pool } = require('pg');
+const http = require('http');
+
+// HTTP-сервер для Render (требует открытый порт)
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Bot is running');
+});
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`HTTP server on port ${PORT}`));
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
