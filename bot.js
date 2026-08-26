@@ -2,10 +2,6 @@ require('dotenv').config();
 const { Telegraf, session } = require('telegraf');
 const { Pool } = require('pg');
 const http = require('http');
-const dns = require('dns');
-
-// Принудительно IPv4
-dns.setDefaultResultOrder('ipv4first');
 
 // HTTP-сервер для Render (требует открытый порт)
 const server = http.createServer((req, res) => {
@@ -15,8 +11,14 @@ const server = http.createServer((req, res) => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`HTTP server on port ${PORT}`));
 
+// Парсим DATABASE_URL и принудительно используем IPv4
+const dbUrl = new URL(process.env.DATABASE_URL);
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  host: dbUrl.hostname,
+  port: parseInt(dbUrl.port) || 5432,
+  database: dbUrl.pathname.slice(1),
+  user: dbUrl.username,
+  password: dbUrl.password,
   ssl: { rejectUnauthorized: false },
   max: 5,
   connectionTimeoutMillis: 15000,
