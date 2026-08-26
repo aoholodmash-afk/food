@@ -21,12 +21,10 @@ ${user.sub_expires_at ? `Действует до: ${new Date(user.sub_expires_at
 🥈 Базовый — 299₽/мес
 • Безлимит рецептов
 • Все функции бота
-• Меню на неделю
 
 🥇 Премиум — 599₽/мес
 • Все функции Базового
-• Фото холодильника (AI)
-• Персональные рекомендации`;
+• Фото холодильника (AI)`;
 
   const buttons = [];
 
@@ -39,6 +37,5 @@ ${user.sub_expires_at ? `Действует до: ${new Date(user.sub_expires_at
 
   buttons.push([Markup.button.callback('🔙 Назад', 'subscribe_back')]);
 
-  const keyboard = Markup.inlineKeyboard(buttons);
-  await ctx.reply(message, keyboard);
+  await ctx.reply(message, Markup.inlineKeyboard(buttons));
 };

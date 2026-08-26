@@ -9,30 +9,30 @@ module.exports = async (ctx) => {
   }
 
   try {
-    const recipeResult = await ctx.pool.query('SELECT * FROM recipes WHERE id = $1', [recipeId]);
-    const recipe = recipeResult.rows[0];
+    const { data: recipe } = await ctx.supabase
+      .from('recipes')
+      .select('*')
+      .eq('id', recipeId)
+      .single();
 
     if (!recipe) {
       return ctx.reply('Рецепт не найден.');
     }
 
-    const ingredientsResult = await ctx.pool.query(`
-      SELECT i.name_ru, ri.amount, ri.unit
-      FROM recipe_ingredients ri
-      JOIN ingredients i ON ri.ingredient_id = i.id
-      WHERE ri.recipe_id = $1
-      ORDER BY ri.is_main DESC
-    `, [recipeId]);
+    const { data: ingredients } = await ctx.supabase
+      .from('recipe_ingredients')
+      .select('amount, unit, is_main, ingredients(name_ru)')
+      .eq('recipe_id', recipeId);
 
-    const ingredients = ingredientsResult.rows
-      .map(ri => `• ${ri.name_ru} — ${ri.amount || ''} ${ri.unit || ''}`)
+    const ingList = (ingredients || [])
+      .map(ri => `• ${ri.ingredients.name_ru} — ${ri.amount || ''} ${ri.unit || ''}`)
       .join('\n');
 
     const message = `🍳 ${recipe.name_ru}
 ⏱ ${recipe.time_minutes || '?'} мин | 🔥 ${recipe.calories_per_serving || '?'} ккал | 👤 ${recipe.servings} порции
 
 📝 Ингредиенты:
-${ingredients}`;
+${ingList}`;
 
     const keyboard = Markup.inlineKeyboard([
       [Markup.button.callback('👨‍🍳 Готовить', `cook_${recipe.id}`)],
@@ -43,15 +43,12 @@ ${ingredients}`;
     ]);
 
     if (recipe.image_url) {
-      await ctx.replyWithPhoto(recipe.image_url, {
-        caption: message,
-        ...keyboard
-      });
+      await ctx.replyWithPhoto(recipe.image_url, { caption: message, ...keyboard });
     } else {
       await ctx.reply(message, keyboard);
     }
   } catch (error) {
-    console.error('Ошибка получения рецепта:', error);
+    console.error('Ошибка:', error.message);
     ctx.reply('Произошла ошибка. Попробуйте позже.');
   }
 };

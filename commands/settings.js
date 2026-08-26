@@ -6,8 +6,8 @@ module.exports = async (ctx) => {
   const message = `⚙️ Настройки
 
 Текущие параметры:
-• Порции по умолчанию: ${user.servings_default}
-• Исключённые продукты: ${user.excluded_ingredients && user.excluded_ingredients.length > 0 ? user.excluded_ingredients.join(', ') : 'нет'}
+• Порции по умолчанию: ${user.servings_default || 2}
+• Исключённые продукты: ${user.excluded_ingredients?.length > 0 ? user.excluded_ingredients.join(', ') : 'нет'}
 
 Выберите, что хотите изменить:`;
 
