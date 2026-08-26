@@ -8,23 +8,40 @@ module.exports = async (ctx) => {
     // Просмотр рецепта
     if (data.startsWith('recipe_')) {
       const recipeId = parseInt(data.split('_')[1]);
+      console.log('Загрузка рецепта:', recipeId);
 
-      const { data: recipe } = await ctx.supabase
+      const { data: recipe, error: recipeError } = await ctx.supabase
         .from('recipes')
         .select('*')
         .eq('id', recipeId)
         .single();
 
+      if (recipeError) console.error('Ошибка рецепта:', recipeError.message);
       if (!recipe) return ctx.answerCbQuery('Рецепт не найден');
 
-      const { data: ingredients } = await ctx.supabase
+      const { data: ingredients, error: ingError } = await ctx.supabase
         .from('recipe_ingredients')
-        .select('amount, unit, is_main, ingredients(name_ru)')
+        .select('amount, unit, is_main, ingredient_id')
         .eq('recipe_id', recipeId);
 
-      const ingList = (ingredients || [])
-        .map(ri => `• ${ri.ingredients.name_ru} — ${ri.amount || ''} ${ri.unit || ''}`)
-        .join('\n');
+      if (ingError) console.error('Ошибка ингредиентов:', ingError.message);
+
+      // Получаем названия ингредиентов отдельно
+      let ingList = '';
+      if (ingredients && ingredients.length > 0) {
+        const ingIds = ingredients.map(i => i.ingredient_id);
+        const { data: ingNames } = await ctx.supabase
+          .from('ingredients')
+          .select('id, name_ru')
+          .in('id', ingIds);
+
+        const ingMap = {};
+        (ingNames || []).forEach(i => { ingMap[i.id] = i.name_ru; });
+
+        ingList = ingredients
+          .map(ri => `• ${ingMap[ri.ingredient_id] || '?'} — ${ri.amount || ''} ${ri.unit || ''}`)
+          .join('\n');
+      }
 
       const message = `🍳 ${recipe.name_ru}
 ⏱ ${recipe.time_minutes || '?'} мин | 🔥 ${recipe.calories_per_serving || '?'} ккал | 👤 ${recipe.servings} порции

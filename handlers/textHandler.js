@@ -1,4 +1,5 @@
 const { Markup } = require('telegraf');
+const { resolveIngredients } = require('../supabase');
 
 module.exports = async (ctx) => {
   const text = ctx.message.text;
@@ -27,7 +28,8 @@ module.exports = async (ctx) => {
   }
 
   // Считаем ингредиентами
-  const ingredients = text.split(',').map(s => s.trim().toLowerCase()).filter(s => s.length > 0);
+  const rawIngredients = text.split(',').map(s => s.trim().toLowerCase()).filter(s => s.length > 0);
+  const ingredients = resolveIngredients(rawIngredients);
 
   if (ingredients.length === 0) {
     return ctx.reply('Не удалось распознать продукты. Попробуйте ещё раз.');
