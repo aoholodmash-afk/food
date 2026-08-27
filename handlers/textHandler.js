@@ -10,7 +10,7 @@ module.exports = async (ctx) => {
       return ctx.reply('Напишите продукты через запятую, например:\nяйца, сыр, помидоры');
 
     case '🎲 Случайный':
-      return require('./commands/random')(ctx);
+      return require('../commands/random')(ctx);
 
     case '📅 Меню на неделю':
       if (ctx.user.subscription === 'free') {
@@ -19,13 +19,13 @@ module.exports = async (ctx) => {
       return ctx.reply('📅 Меню на неделю — в разработке');
 
     case '⭐ Избранное':
-      return require('./commands/favorites')(ctx);
+      return require('../commands/favorites')(ctx);
 
     case '⚙️ Настройки':
-      return require('./commands/settings')(ctx);
+      return require('../commands/settings')(ctx);
 
     case '💎 Подписка':
-      return require('./commands/subscribe')(ctx);
+      return require('../commands/subscribe')(ctx);
   }
 
   // Парсинг ввода

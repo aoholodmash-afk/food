@@ -60,6 +60,16 @@ bot.use(async (ctx, next) => {
     }
   } catch (error) {
     console.error('Ошибка middleware:', error.message);
+    // Fallback: создаём временного пользователя
+    ctx.user = {
+      telegram_id: telegramId,
+      username: ctx.from.username,
+      first_name: ctx.from.first_name,
+      subscription: 'free',
+      daily_requests: 0,
+      servings_default: 2,
+      excluded_ingredients: []
+    };
   }
 
   return next();
